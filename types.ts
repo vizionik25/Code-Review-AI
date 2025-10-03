@@ -32,9 +32,21 @@ export interface HistoryItem {
   language: string; // e.g., 'TypeScript' or 'Repository'
   feedback: string;
   code: string; // empty for repo review
-  mode: string;
+  mode: string[];
   reviewType: 'file' | 'repo';
 }
+
+export interface ReviewMode {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export interface ReviewModeGroup {
+    name: string;
+    modes: ReviewMode[];
+}
+
 
 declare global {
   interface Window {

@@ -8,6 +8,7 @@ import { LoaderIcon } from './icons/LoaderIcon';
 import { CodeFile } from '../types';
 import { downloadFile } from '../utils/fileUtils';
 import { generateFullCodeFromReview } from '../services/geminiService';
+import { saveFileWithBakExtension } from '../services/localFileService';
 
 interface FeedbackDisplayProps {
   feedback: string;
@@ -16,6 +17,7 @@ interface FeedbackDisplayProps {
   originalCode: string;
   setError: (error: string | null) => void;
   reviewType: 'file' | 'repo';
+  directoryHandle: FileSystemDirectoryHandle | null;
 }
 
 const Placeholder = () => (
@@ -34,12 +36,20 @@ const DownloadIcon: React.FC = () => (
     </svg>
 );
 
+const SaveIcon: React.FC = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z" />
+    </svg>
+);
+
+
 type ViewMode = 'review' | 'diff';
 
-export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLoading, selectedFile, originalCode, setError, reviewType }) => {
+export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLoading, selectedFile, originalCode, setError, reviewType, directoryHandle }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('review');
   const [diffCode, setDiffCode] = useState<string | null>(null);
   const [isGeneratingDiff, setIsGeneratingDiff] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Reset diff when feedback changes or review type changes
   useEffect(() => {
@@ -76,6 +86,21 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
     }
   };
 
+  const handleSaveChanges = async () => {
+    if (!directoryHandle || !selectedFile || diffCode === null) return;
+    
+    setIsSaving(true);
+    setError(null);
+    try {
+        await saveFileWithBakExtension(directoryHandle, selectedFile.path, diffCode);
+    } catch(e) {
+        const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+        setError(`Failed to save file: ${errorMessage}`);
+    } finally {
+        setIsSaving(false);
+    }
+  };
+
   const renderContent = () => {
     if (isLoading) {
       return (
@@ -104,25 +129,45 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
         );
       }
       return (
-        <ReactDiffViewer
-            oldValue={originalCode}
-            newValue={diffCode || ''}
-            splitView={true}
-            useDarkTheme={true}
-            styles={{
-                variables: {
-                    dark: {
-                        addedBackground: '#047857', // green-700
-                        removedBackground: '#991B1B', // red-800
-                    }
-                },
-                diffContainer: { backgroundColor: '#1F2937' }, // gray-800
-                gutter: { backgroundColor: '#4B5563' }, // gray-600
-                line: {
-                    color: '#E5E7EB', // gray-200
-                },
-            }}
-        />
+        <div className="flex flex-col h-full bg-gray-800">
+             <div className="flex-shrink-0 p-2 bg-gray-900/50 border-b border-gray-700 flex justify-end items-center">
+                <button
+                    onClick={handleSaveChanges}
+                    disabled={!directoryHandle || isSaving || diffCode === null}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:bg-blue-800/50 disabled:cursor-not-allowed transition-colors"
+                    title={!directoryHandle ? "Save is only available for local folder reviews" : `Save changes to ${selectedFile?.path}.bak`}
+                >
+                    {isSaving ? (
+                        <><LoaderIcon /> Saving...</>
+                    ) : (
+                        <><SaveIcon /> Save to .bak</>
+                    )}
+                </button>
+            </div>
+            <div className="flex-grow overflow-auto">
+                <ReactDiffViewer
+                    oldValue={originalCode}
+                    newValue={diffCode || ''}
+                    splitView={true}
+                    useDarkTheme={true}
+                    styles={{
+                        variables: {
+                            dark: {
+                                addedBackground: '#047857', // green-700
+                                removedBackground: '#991B1B', // red-800
+                            }
+                        },
+                        diffContainer: { backgroundColor: '#1F2937', border: 'none' }, // gray-800
+                        gutter: { backgroundColor: '#374151', border: 'none' }, // gray-700
+                        line: {
+                            // Fix: Moved text color property here from 'variables.dark' as 'color' is not a valid property there.
+                            color: '#D1D5DB',
+                            '&:hover': { background: '#374151' },
+                        },
+                    }}
+                />
+            </div>
+        </div>
       );
     }
 
@@ -187,7 +232,7 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
           Save
         </button>
       </div>
-      <div className="flex-grow overflow-y-auto bg-gray-800">
+      <div className="flex-grow overflow-y-auto">
         {renderContent()}
       </div>
     </div>

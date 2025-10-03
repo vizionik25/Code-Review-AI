@@ -69,17 +69,25 @@ const PROMPT_INSTRUCTIONS: Record<string, string> = {
   `
 };
 
-export async function reviewCode(code: string, language: string, customPrompt: string, mode: string): Promise<string> {
+export async function reviewCode(code: string, language: string, customPrompt: string, modes: string[]): Promise<string> {
+  const activeModes = modes.length > 0 ? modes : ['comprehensive'];
+
+  const modeLabels = activeModes.map(m => m.replace(/_/g, ' ')).join(', ');
   
-  let instructions = (PROMPT_INSTRUCTIONS[mode] || PROMPT_INSTRUCTIONS['comprehensive']).replace(/{language}/g, language);
+  const instructions = activeModes.map(mode => {
+      const instruction = PROMPT_INSTRUCTIONS[mode] || '';
+      return `--- INSTRUCTIONS FOR ${mode.replace(/_/g, ' ').toUpperCase()} ---\n${instruction.replace(/{language}/g, language)}`;
+  }).join('\n\n');
   
-  const modeLabel = mode.replace(/_/g, ' ');
-  let prompt = `As an expert code reviewer specializing in ${modeLabel}, please analyze the following ${language} code.`;
+  let prompt = `As an expert code reviewer specializing in ${modeLabels}, please analyze the following ${language} code.
+  
+You must follow all sets of instructions provided below.
+`;
 
   if (customPrompt && customPrompt.trim()) {
       prompt += `
       
-      In addition to your primary ${modeLabel} analysis, please follow these specific instructions:
+      In addition to the primary analysis, please follow these specific custom instructions:
       ---
       ${customPrompt.trim()}
       ---
@@ -110,7 +118,7 @@ export async function reviewCode(code: string, language: string, customPrompt: s
   }
 }
 
-export async function reviewRepository(files: { path: string, content: string }[], repoUrl: string, customPrompt: string, mode: string): Promise<string> {
+export async function reviewRepository(files: { path: string, content: string }[], repoUrl: string, customPrompt: string, modes: string[]): Promise<string> {
   const fileManifest = files.map(f => `- ${f.path}`).join('\n');
   
   const allCode = files.map(f => `
@@ -124,10 +132,15 @@ ${f.content}
       throw new Error("The selected repository is too large for a holistic review. Please select a smaller repository or review individual files.");
   }
   
-  const modeLabel = mode.replace(/_/g, ' ');
-  let instructions = (PROMPT_INSTRUCTIONS[mode] || PROMPT_INSTRUCTIONS['comprehensive']).replace(/{language}/g, "multiple languages");
-  
-  let prompt = `As an expert code reviewer specializing in ${modeLabel}, please perform a holistic review of the entire codebase from the repository at ${repoUrl}.
+  const activeModes = modes.length > 0 ? modes : ['comprehensive'];
+  const modeLabels = activeModes.map(m => m.replace(/_/g, ' ')).join(', ');
+
+  const instructions = activeModes.map(mode => {
+      const instruction = PROMPT_INSTRUCTIONS[mode] || '';
+      return `--- INSTRUCTIONS FOR ${mode.replace(/_/g, ' ').toUpperCase()} ---\n${instruction.replace(/{language}/g, "multiple languages")}`;
+  }).join('\n\n');
+
+  let prompt = `As an expert code reviewer specializing in ${modeLabels}, please perform a holistic review of the entire codebase from the repository at ${repoUrl}.
 
 Your review should be at the repository level. Instead of line-by-line comments for a single file, focus on high-level feedback, architectural patterns, cross-file issues, and overall code quality. When you refer to specific code, please mention the file path.
 
@@ -139,13 +152,13 @@ And here is the content of all the files:
 ${allCode}
 ---
 
-Your primary instructions are:
+Your primary instructions are below. You must follow all sets of instructions provided.
 ${instructions}
 `;
   
   if (customPrompt && customPrompt.trim()) {
       prompt += `
-      \nIn addition to your primary ${modeLabel} analysis, please follow these specific instructions:
+      \nIn addition to the primary analysis, please follow these specific custom instructions:
       ---
       ${customPrompt.trim()}
       ---

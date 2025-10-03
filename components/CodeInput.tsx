@@ -1,11 +1,72 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CodeFile } from '../types';
 import { fetchRepoFiles, fetchFileContent, parseGitHubUrl } from '../services/githubService';
-import { openDirectoryAndGetFiles, readFileContent } from '../services/localFileService';
+import { openDirectoryAndGetFiles, readFileContent, getFilesFromInput } from '../services/localFileService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LanguageOverrideSelector } from './LanguageOverrideSelector';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { ReviewModeSelector } from './ReviewModeSelector';
+import { LocalFolderWarningModal } from './LocalFolderWarningModal';
+
+interface CodePasteModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (code: string) => void;
+  initialCode: string;
+}
+
+const CodePasteModal: React.FC<CodePasteModalProps> = ({ isOpen, onClose, onConfirm, initialCode }) => {
+  const [code, setCode] = useState(initialCode);
+
+  useEffect(() => {
+    if (isOpen) {
+      setCode(initialCode);
+    }
+  }, [isOpen, initialCode]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const handleConfirm = () => {
+    onConfirm(code);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onClose} aria-modal="true" role="dialog">
+      <div 
+        className="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl h-4/5 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-lg font-semibold">Paste Code</h2>
+           <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-700" aria-label="Close modal">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div className="p-4 flex-grow">
+          <textarea
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Paste your code here..."
+            className="w-full h-full p-3 bg-gray-900/50 border border-gray-600 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+            spellCheck="false"
+          />
+        </div>
+        <div className="p-4 border-t border-gray-700 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md transition-colors">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-md transition-colors">
+            Save Code
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface CodeInputProps {
   onReview: (code: string, language: string, customPrompt: string) => void;
@@ -18,9 +79,12 @@ interface CodeInputProps {
   customPrompt: string;
   setCustomPrompt: (prompt: string) => void;
   setError: (error: string | null) => void;
-  reviewMode: string;
-  setReviewMode: (mode: string) => void;
+  reviewModes: string[];
+  setReviewModes: (modes: string[]) => void;
+  setDirectoryHandle: (handle: FileSystemDirectoryHandle | null) => void;
 }
+
+const HIDE_WARNING_KEY = 'hideLocalFolderWarning';
 
 export const CodeInput: React.FC<CodeInputProps> = ({ 
     onReview, 
@@ -33,25 +97,42 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     customPrompt,
     setCustomPrompt,
     setError,
-    reviewMode,
-    setReviewMode
+    reviewModes,
+    setReviewModes,
+    setDirectoryHandle,
 }) => {
   const [repoUrl, setRepoUrl] = useState('');
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [languageOverride, setLanguageOverride] = useState('auto-detect');
   const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
+  const [isIframe, setIsIframe] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+
+  useEffect(() => {
+    try {
+      setIsIframe(window.self !== window.top);
+    } catch (e) {
+      // Browsers can throw an error when trying to access window.top from a cross-origin iframe.
+      // In this case, we can assume it's an iframe.
+      setIsIframe(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (selectedFile) {
       setCode(selectedFile.content || '');
     } else {
-      setCode('');
+      // Don't clear code if there's no selected file, it might be pasted code
     }
   }, [selectedFile, setCode]);
 
   const handleFetchRepo = async () => {
     setError(null);
+    setDirectoryHandle(null);
     const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) {
       setError("Invalid GitHub repository URL.");
@@ -60,6 +141,7 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     setIsFetchingFiles(true);
     setFiles([]);
     setSelectedFile(null);
+    setCode('');
     try {
       const repoFiles = await fetchRepoFiles(parsed.owner, parsed.repo);
       setFiles(repoFiles);
@@ -70,21 +152,71 @@ export const CodeInput: React.FC<CodeInputProps> = ({
       setIsFetchingFiles(false);
     }
   };
+  
+  const handleLocalFolderClick = () => {
+    const shouldHideWarning = localStorage.getItem(HIDE_WARNING_KEY) === 'true';
+    if (shouldHideWarning) {
+        initiateDirectorySelection();
+    } else {
+        setIsWarningModalOpen(true);
+    }
+  };
 
-  const handleOpenDirectory = async () => {
+  const handleWarningConfirm = (dontShowAgain: boolean) => {
+    if (dontShowAgain) {
+        localStorage.setItem(HIDE_WARNING_KEY, 'true');
+    }
+    setIsWarningModalOpen(false);
+    initiateDirectorySelection();
+  };
+  
+  const initiateDirectorySelection = async () => {
+    // Reset state before starting selection
     setError(null);
-    setIsFetchingFiles(true);
     setFiles([]);
     setSelectedFile(null);
-    setRepoUrl(''); // Clear repo url if selecting local
+    setCode('');
+    setRepoUrl('');
+    setDirectoryHandle(null);
+
+    // Use fallback for iframe environments
+    if (isIframe) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    // Use File System Access API for top-level contexts
+    setIsFetchingFiles(true);
     try {
-        const localFiles = await openDirectoryAndGetFiles();
+      const { directoryHandle, files: localFiles } = await openDirectoryAndGetFiles();
+      if (localFiles.length > 0) {
+        setDirectoryHandle(directoryHandle);
         setFiles(localFiles);
+      } else {
+        setDirectoryHandle(null);
+      }
     } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+      setError(errorMessage);
+      setDirectoryHandle(null);
+    } finally {
+      setIsFetchingFiles(false);
+    }
+  };
+
+  const handleFileSelectedFromInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    setIsFetchingFiles(true);
+    try {
+        const localFiles = await getFilesFromInput(e.target.files);
+        setFiles(localFiles);
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
         setError(errorMessage);
     } finally {
         setIsFetchingFiles(false);
+        if (e.target) e.target.value = ''; // Reset for next selection
     }
   };
 
@@ -98,10 +230,17 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     const file = files.find(f => f.path === filePath);
     if (file) {
       setError(null);
+
+      // If content is already loaded (from iframe fallback), use it.
+      if (file.content) {
+        setSelectedFile(file);
+        return;
+      }
+
       setIsFetchingFiles(true);
       try {
         let content = '';
-        if (file.handle) { // Local file
+        if (file.handle) { // Local file from Picker API
           content = await readFileContent(file);
         } else { // GitHub file
           const parsed = parseGitHubUrl(repoUrl);
@@ -121,7 +260,9 @@ export const CodeInput: React.FC<CodeInputProps> = ({
   };
   
   const handleReviewClick = () => {
-    const languageToUse = languageOverride !== 'auto-detect' ? languageOverride : selectedFile?.language.value || 'typescript';
+    const languageToUse = languageOverride !== 'auto-detect' 
+      ? languageOverride 
+      : selectedFile?.language.value || 'typescript'; // Fallback for pasted code
     onReview(code, languageToUse, customPrompt);
   };
 
@@ -150,8 +291,18 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     }
   };
 
+  const handlePasteConfirm = (pastedCode: string) => {
+    setCode(pastedCode);
+    setSelectedFile(null);
+    setRepoUrl('');
+    setFiles([]);
+    setDirectoryHandle(null);
+    setIsPasteModalOpen(false);
+  };
+
+
   return (
-    <div className="bg-gray-800 rounded-lg shadow-lg flex flex-col h-[75vh]">
+    <div className="bg-gray-800 rounded-lg shadow-lg flex flex-col">
       <div className="p-4 bg-gray-700/50 rounded-t-lg border-b border-gray-600">
         <h2 className="text-lg font-semibold text-gray-100">Code Input</h2>
       </div>
@@ -172,19 +323,39 @@ export const CodeInput: React.FC<CodeInputProps> = ({
             </button>
         </div>
         
-        {/* Local Directory Button */}
+        {/* Local/Paste Buttons */}
         <div className="relative flex items-center">
             <div className="flex-grow border-t border-gray-600"></div>
             <span className="flex-shrink mx-4 text-gray-500 text-sm">OR</span>
             <div className="flex-grow border-t border-gray-600"></div>
         </div>
-        <button
-            onClick={handleOpenDirectory}
-            disabled={isFetchingFiles}
-            className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 rounded-md disabled:bg-gray-800 disabled:cursor-not-allowed transition-colors"
-        >
-            Select Local Folder
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+            <input
+              type="file"
+              // @ts-ignore
+              webkitdirectory="true"
+              directory="true"
+              multiple
+              ref={fileInputRef}
+              onChange={handleFileSelectedFromInput}
+              style={{ display: 'none' }}
+            />
+            <button
+                onClick={handleLocalFolderClick}
+                disabled={isFetchingFiles}
+                className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 rounded-md disabled:bg-gray-800 disabled:cursor-not-allowed transition-colors"
+                title="Select a folder from your local machine"
+            >
+                Select Local Folder
+            </button>
+            <button
+                onClick={() => setIsPasteModalOpen(true)}
+                disabled={isFetchingFiles}
+                className="w-full py-2.5 bg-gray-700 hover:bg-gray-600 rounded-md disabled:bg-gray-800 disabled:cursor-not-allowed transition-colors"
+            >
+                Paste Code Manually
+            </button>
+        </div>
 
         {/* File Selector */}
         {(files.length > 0 || isFetchingFiles) && (
@@ -207,9 +378,9 @@ export const CodeInput: React.FC<CodeInputProps> = ({
               <div className="mt-4">
                   <button
                       onClick={handleRepoReviewClick}
-                      disabled={isLoading || isFetchingFiles || reviewMode === 'test_generation'}
+                      disabled={isLoading || isFetchingFiles || reviewModes.includes('test_generation')}
                       className="w-full flex items-center justify-center gap-2 px-4 py-2.5 font-semibold bg-purple-600 text-white rounded-md hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed transition-colors"
-                      title={reviewMode === 'test_generation' ? "Test Generation is not available for repository-wide reviews" : "Review the entire repository"}
+                      title={reviewModes.includes('test_generation') ? "Test Generation is not available for repository-wide reviews" : "Review the entire repository"}
                   >
                       <SparklesIcon />
                       Review Entire Repository
@@ -220,8 +391,6 @@ export const CodeInput: React.FC<CodeInputProps> = ({
         )}
 
         <LanguageOverrideSelector value={languageOverride} onChange={setLanguageOverride} />
-
-        <ReviewModeSelector selectedMode={reviewMode} onModeChange={setReviewMode} />
 
         {/* Custom Prompt Section */}
         <div className="border-t border-gray-700 pt-4">
@@ -242,29 +411,31 @@ export const CodeInput: React.FC<CodeInputProps> = ({
             />
           )}
         </div>
-      </div>
 
-      <div className="flex-grow p-4 pt-0 flex flex-col">
-        <textarea
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Paste your code here, or load it from a source above."
-          className="w-full flex-grow p-3 bg-gray-900/50 border border-gray-600 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
-          spellCheck="false"
-          disabled={!!selectedFile}
-        />
+        <ReviewModeSelector selectedModes={reviewModes} onModeChange={setReviewModes} />
       </div>
 
       <div className="p-4 bg-gray-700/50 rounded-b-lg border-t border-gray-600 flex justify-end">
         <button
           onClick={handleReviewClick}
-          disabled={isLoading || !code || !selectedFile}
+          disabled={isLoading || !code}
           className="flex items-center gap-2 px-6 py-2.5 font-semibold bg-green-600 text-white rounded-md hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed transition-colors"
         >
           <SparklesIcon />
           {isLoading ? 'Reviewing...' : 'Review File'}
         </button>
       </div>
+      <CodePasteModal 
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
+        onConfirm={handlePasteConfirm}
+        initialCode={code}
+      />
+       <LocalFolderWarningModal
+        isOpen={isWarningModalOpen}
+        onClose={() => setIsWarningModalOpen(false)}
+        onConfirm={handleWarningConfirm}
+      />
     </div>
   );
 };

@@ -48,11 +48,13 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, onClose, his
                                         className="w-full text-left p-4 hover:bg-gray-700/50 transition-colors"
                                     >
                                         <p className="font-semibold text-gray-200 truncate">{item.fileName}</p>
-                                        <div className="flex items-center gap-2 mt-1">
+                                        <div className="flex items-center flex-wrap gap-2 mt-1">
                                             <p className="text-sm text-gray-400">{item.language}</p>
-                                            <span className="px-2 py-0.5 text-xs font-medium bg-indigo-900 text-indigo-300 rounded-full capitalize">
-                                                {(item.mode || 'comprehensive').replace('_', ' ')}
-                                            </span>
+                                            {(item.mode || ['comprehensive']).map(mode => (
+                                                 <span key={mode} className="px-2 py-0.5 text-xs font-medium bg-indigo-900 text-indigo-300 rounded-full capitalize">
+                                                    {mode.replace(/_/g, ' ')}
+                                                </span>
+                                            ))}
                                         </div>
                                         <p className="text-xs text-gray-500 mt-1.5">
                                             {new Date(item.timestamp).toLocaleString()}

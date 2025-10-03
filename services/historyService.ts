@@ -7,10 +7,15 @@ export function getHistory(): HistoryItem[] {
     const historyJson = localStorage.getItem(HISTORY_KEY);
     if (historyJson) {
       const parsedHistory = JSON.parse(historyJson) as any[];
-      const history = parsedHistory.map(item => ({
-        ...item,
-        reviewType: item.reviewType || 'file'
-      }));
+      const history = parsedHistory.map(item => {
+        // Backwards compatibility for old history items
+        const mode = typeof item.mode === 'string' ? [item.mode] : item.mode || ['comprehensive'];
+        return {
+          ...item,
+          mode: mode,
+          reviewType: item.reviewType || 'file'
+        };
+      });
       // Sort by timestamp descending (newest first)
       return history.sort((a, b) => b.timestamp - a.timestamp);
     }
