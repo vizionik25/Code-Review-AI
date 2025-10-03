@@ -60,7 +60,7 @@ const PROMPT_INSTRUCTIONS: Record<string, string> = {
     Focus on the following critical areas:
     1.  **Reliability & Robustness**: Identify potential failure points, unhandled exceptions, and race conditions. Ensure graceful error handling and fault tolerance.
     2.  **Security Hardening**: Perform a strict security audit. Look for any remaining vulnerabilities, insecure configurations, or exposure of sensitive data. Check for hardcoded secrets or API keys.
-    3.  **Performance Polish**: Confirm there are no significant performance bottlenecks that could impact scalability under load.
+    3.  **Performance Polish**: Confirm that there are no significant performance bottlenecks that could impact scalability under load.
     4.  **Logging & Monitoring**: Verify that there is adequate logging for debugging and monitoring production issues. Suggest additions where lacking.
     5.  **Configuration Management**: Check for hardcoded values that should be externalized into configuration files or environment variables.
     6.  **Code Sanity Check**: Confirm that the code follows strict {language} best practices and is clean, maintainable, and ready for a production environment.
@@ -105,6 +105,63 @@ export async function reviewCode(code: string, language: string, customPrompt: s
     console.error("Error calling Gemini API:", error);
     if (error instanceof Error) {
         throw new Error(`Error during code review: ${error.message}`);
+    }
+    throw new Error("An unknown error occurred while communicating with the AI.");
+  }
+}
+
+export async function reviewRepository(files: { path: string, content: string }[], repoUrl: string, customPrompt: string, mode: string): Promise<string> {
+  const fileManifest = files.map(f => `- ${f.path}`).join('\n');
+  
+  const allCode = files.map(f => `
+// FILE: ${f.path}
+\`\`\`
+${f.content}
+\`\`\`
+`).join('\n---\n');
+
+  if (allCode.length > 200000) { // Safety limit for context window
+      throw new Error("The selected repository is too large for a holistic review. Please select a smaller repository or review individual files.");
+  }
+  
+  const modeLabel = mode.replace(/_/g, ' ');
+  let instructions = (PROMPT_INSTRUCTIONS[mode] || PROMPT_INSTRUCTIONS['comprehensive']).replace(/{language}/g, "multiple languages");
+  
+  let prompt = `As an expert code reviewer specializing in ${modeLabel}, please perform a holistic review of the entire codebase from the repository at ${repoUrl}.
+
+Your review should be at the repository level. Instead of line-by-line comments for a single file, focus on high-level feedback, architectural patterns, cross-file issues, and overall code quality. When you refer to specific code, please mention the file path.
+
+Here is a manifest of all the files provided:
+${fileManifest}
+
+And here is the content of all the files:
+---
+${allCode}
+---
+
+Your primary instructions are:
+${instructions}
+`;
+  
+  if (customPrompt && customPrompt.trim()) {
+      prompt += `
+      \nIn addition to your primary ${modeLabel} analysis, please follow these specific instructions:
+      ---
+      ${customPrompt.trim()}
+      ---
+      `;
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    return response.text;
+  } catch (error) {
+    console.error("Error calling Gemini API for repository review:", error);
+    if (error instanceof Error) {
+        throw new Error(`Error during repository review: ${error.message}`);
     }
     throw new Error("An unknown error occurred while communicating with the AI.");
   }

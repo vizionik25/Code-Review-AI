@@ -28,11 +28,12 @@ export interface GitHubContent {
 export interface HistoryItem {
   id: string;
   timestamp: number;
-  fileName: string;
-  language: string;
+  fileName: string; // file path or repo URL
+  language: string; // e.g., 'TypeScript' or 'Repository'
   feedback: string;
-  code: string;
+  code: string; // empty for repo review
   mode: string;
+  reviewType: 'file' | 'repo';
 }
 
 declare global {

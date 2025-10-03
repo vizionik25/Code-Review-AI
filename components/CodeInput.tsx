@@ -9,6 +9,7 @@ import { ReviewModeSelector } from './ReviewModeSelector';
 
 interface CodeInputProps {
   onReview: (code: string, language: string, customPrompt: string) => void;
+  onRepoReview: (files: {path: string, content: string}[], repoUrl: string, customPrompt: string) => void;
   isLoading: boolean;
   selectedFile: CodeFile | null;
   setSelectedFile: (file: CodeFile | null) => void;
@@ -23,6 +24,7 @@ interface CodeInputProps {
 
 export const CodeInput: React.FC<CodeInputProps> = ({ 
     onReview, 
+    onRepoReview,
     isLoading, 
     selectedFile, 
     setSelectedFile, 
@@ -74,6 +76,7 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     setIsFetchingFiles(true);
     setFiles([]);
     setSelectedFile(null);
+    setRepoUrl(''); // Clear repo url if selecting local
     try {
         const localFiles = await openDirectoryAndGetFiles();
         setFiles(localFiles);
@@ -122,6 +125,31 @@ export const CodeInput: React.FC<CodeInputProps> = ({
     onReview(code, languageToUse, customPrompt);
   };
 
+  const handleRepoReviewClick = async () => {
+    if (!repoUrl || files.length === 0) return;
+
+    setError(null);
+    setIsFetchingFiles(true);
+    setSelectedFile(null);
+    try {
+        const parsed = parseGitHubUrl(repoUrl);
+        if (!parsed) return;
+
+        const filesWithContent = await Promise.all(files.map(async (file) => {
+            const content = await fetchFileContent(parsed.owner, parsed.repo, file.path);
+            return { path: file.path, content };
+        }));
+
+        onRepoReview(filesWithContent, repoUrl, customPrompt);
+
+    } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+        setError(`Failed to fetch repository content: ${errorMessage}`);
+    } finally {
+        setIsFetchingFiles(false);
+    }
+  };
+
   return (
     <div className="bg-gray-800 rounded-lg shadow-lg flex flex-col h-[75vh]">
       <div className="p-4 bg-gray-700/50 rounded-t-lg border-b border-gray-600">
@@ -160,6 +188,7 @@ export const CodeInput: React.FC<CodeInputProps> = ({
 
         {/* File Selector */}
         {(files.length > 0 || isFetchingFiles) && (
+          <div>
             <select
                 value={selectedFile?.path || ''}
                 onChange={handleFileSelect}
@@ -173,6 +202,21 @@ export const CodeInput: React.FC<CodeInputProps> = ({
                     </option>
                 ))}
             </select>
+
+            {repoUrl && (
+              <div className="mt-4">
+                  <button
+                      onClick={handleRepoReviewClick}
+                      disabled={isLoading || isFetchingFiles || reviewMode === 'test_generation'}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 font-semibold bg-purple-600 text-white rounded-md hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed transition-colors"
+                      title={reviewMode === 'test_generation' ? "Test Generation is not available for repository-wide reviews" : "Review the entire repository"}
+                  >
+                      <SparklesIcon />
+                      Review Entire Repository
+                  </button>
+              </div>
+            )}
+          </div>
         )}
 
         <LanguageOverrideSelector value={languageOverride} onChange={setLanguageOverride} />
@@ -207,17 +251,18 @@ export const CodeInput: React.FC<CodeInputProps> = ({
           placeholder="Paste your code here, or load it from a source above."
           className="w-full flex-grow p-3 bg-gray-900/50 border border-gray-600 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
           spellCheck="false"
+          disabled={!!selectedFile}
         />
       </div>
 
       <div className="p-4 bg-gray-700/50 rounded-b-lg border-t border-gray-600 flex justify-end">
         <button
           onClick={handleReviewClick}
-          disabled={isLoading || !code}
+          disabled={isLoading || !code || !selectedFile}
           className="flex items-center gap-2 px-6 py-2.5 font-semibold bg-green-600 text-white rounded-md hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed transition-colors"
         >
           <SparklesIcon />
-          {isLoading ? 'Reviewing...' : 'Review Code'}
+          {isLoading ? 'Reviewing...' : 'Review File'}
         </button>
       </div>
     </div>

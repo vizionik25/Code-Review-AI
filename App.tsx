@@ -4,7 +4,7 @@ import { FeedbackDisplay } from './components/FeedbackDisplay';
 import { Header } from './components/Header';
 import Notification from './components/Notification';
 import { HistoryPanel } from './components/HistoryPanel';
-import { reviewCode } from './services/geminiService';
+import { reviewCode, reviewRepository } from './services/geminiService';
 import { CodeFile, HistoryItem } from './types';
 import { getHistory, addHistoryItem, clearHistory } from './services/historyService';
 
@@ -18,6 +18,7 @@ function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState('comprehensive');
+  const [reviewType, setReviewType] = useState<'file' | 'repo'>('file');
 
 
   useEffect(() => {
@@ -32,6 +33,7 @@ function App() {
     setIsLoading(true);
     setFeedback('');
     setError(null);
+    setReviewType('file');
     try {
       const review = await reviewCode(codeToReview, language, prompt, reviewMode);
       setFeedback(review);
@@ -44,6 +46,7 @@ function App() {
           feedback: review,
           code: codeToReview,
           mode: reviewMode,
+          reviewType: 'file',
         };
         addHistoryItem(historyItem);
         setHistory(getHistory());
@@ -57,12 +60,54 @@ function App() {
     }
   }, [selectedFile, reviewMode]);
 
+  const handleRepoReview = useCallback(async (filesWithContent: {path: string, content: string}[], repoUrl: string, prompt: string) => {
+    setIsLoading(true);
+    setFeedback('');
+    setError(null);
+    setReviewType('repo');
+    setSelectedFile(null);
+    setCode('');
+    try {
+      const review = await reviewRepository(filesWithContent, repoUrl, prompt, reviewMode);
+      setFeedback(review);
+      
+      const historyItem: HistoryItem = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        fileName: repoUrl,
+        language: 'Repository',
+        feedback: review,
+        code: '',
+        mode: reviewMode,
+        reviewType: 'repo',
+      };
+      addHistoryItem(historyItem);
+      setHistory(getHistory());
+      
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+      setError(`Failed to get review: ${errorMessage}`);
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [reviewMode]);
+
   const handleSelectHistoryItem = (item: HistoryItem) => {
-    const language = { value: item.language.toLowerCase(), label: item.language, extensions: [] };
-    setSelectedFile({ path: item.fileName, language });
-    setCode(item.code);
-    setFeedback(item.feedback);
-    setReviewMode(item.mode || 'comprehensive');
+    if (item.reviewType === 'repo') {
+        setSelectedFile(null);
+        setCode('');
+        setFeedback(item.feedback);
+        setReviewMode(item.mode || 'comprehensive');
+        setReviewType('repo');
+    } else {
+        const language = { value: item.language.toLowerCase(), label: item.language, extensions: [] };
+        setSelectedFile({ path: item.fileName, language });
+        setCode(item.code);
+        setFeedback(item.feedback);
+        setReviewMode(item.mode || 'comprehensive');
+        setReviewType('file');
+    }
     setIsHistoryPanelOpen(false);
   };
 
@@ -89,6 +134,7 @@ function App() {
           <div>
             <CodeInput
               onReview={handleReview}
+              onRepoReview={handleRepoReview}
               isLoading={isLoading}
               selectedFile={selectedFile}
               setSelectedFile={setSelectedFile}
@@ -108,6 +154,7 @@ function App() {
               selectedFile={selectedFile}
               originalCode={code}
               setError={setError}
+              reviewType={reviewType}
             />
           </div>
         </div>

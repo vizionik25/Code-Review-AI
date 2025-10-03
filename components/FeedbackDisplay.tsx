@@ -15,6 +15,7 @@ interface FeedbackDisplayProps {
   selectedFile: CodeFile | null;
   originalCode: string;
   setError: (error: string | null) => void;
+  reviewType: 'file' | 'repo';
 }
 
 const Placeholder = () => (
@@ -35,21 +36,21 @@ const DownloadIcon: React.FC = () => (
 
 type ViewMode = 'review' | 'diff';
 
-export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLoading, selectedFile, originalCode, setError }) => {
+export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLoading, selectedFile, originalCode, setError, reviewType }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('review');
   const [diffCode, setDiffCode] = useState<string | null>(null);
   const [isGeneratingDiff, setIsGeneratingDiff] = useState(false);
 
-  // Reset diff when feedback changes
+  // Reset diff when feedback changes or review type changes
   useEffect(() => {
     setDiffCode(null);
     setViewMode('review');
-  }, [feedback]);
+  }, [feedback, reviewType]);
 
   const handleSaveFeedback = () => {
-    if (!feedback || !selectedFile) return;
-    const originalFilename = selectedFile.path.split('/').pop() || 'review';
-    const downloadFilename = `${originalFilename}.review.md`;
+    if (!feedback) return;
+    const namePart = reviewType === 'repo' ? 'repository-review' : selectedFile?.path.split('/').pop() || 'review';
+    const downloadFilename = `${namePart}.review.md`;
     downloadFile(feedback, downloadFilename, 'text/markdown;charset=utf-8');
   };
 
@@ -91,7 +92,7 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
       return <Placeholder />;
     }
 
-    if (viewMode === 'diff') {
+    if (viewMode === 'diff' && reviewType === 'file') {
       if (isGeneratingDiff) {
         return (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -115,12 +116,8 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
                         removedBackground: '#991B1B', // red-800
                     }
                 },
-                // FIX: The 'background' property under `variables.dark` is deprecated in recent versions of react-diff-viewer.
-                // The main viewer background color should be set on `diffContainer` instead.
                 diffContainer: { backgroundColor: '#1F2937' }, // gray-800
                 gutter: { backgroundColor: '#4B5563' }, // gray-600
-                // FIX: The 'color' property under 'variables.dark' is not supported in recent versions of react-diff-viewer.
-                // To set the text color for unchanged lines, it should be applied to the 'line' style object.
                 line: {
                     color: '#E5E7EB', // gray-200
                 },
@@ -130,18 +127,14 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
     }
 
     return (
-        <div className="prose prose-invert prose-sm md:prose-base max-w-none text-gray-300">
+        <div className="prose prose-invert prose-sm md:prose-base max-w-none text-gray-300 p-4">
         <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-            // FIX: Add `any` type to props to resolve TypeScript error on `inline` property.
-            // This is likely due to a type definition mismatch in the `react-markdown` library.
             code({ node, inline, className, children, ...props }: any) {
                 const match = /language-(\w+)/.exec(className || '');
                 return !inline && match ? (
                 <SyntaxHighlighter
-                    // FIX: Cast style to `any` to resolve type error. This is a known issue with
-                    // the type definitions for react-syntax-highlighter styles.
                     style={vscDarkPlus as any}
                     language={match[1]}
                     PreTag="div"
@@ -170,14 +163,15 @@ export const FeedbackDisplay: React.FC<FeedbackDisplayProps> = ({ feedback, isLo
             <div className="isolate inline-flex rounded-md shadow-sm bg-gray-900/50 p-1">
                  <button
                     onClick={() => setViewMode('review')}
-                    className={`relative inline-flex items-center rounded-l-md px-3 py-1 text-sm font-semibold transition-colors ${viewMode === 'review' ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+                    className={`relative inline-flex items-center rounded-l-md px-3 py-1 text-sm font-semibold transition-colors ${viewMode === 'review' || reviewType === 'repo' ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
                 >
                     Review
                 </button>
                 <button
                     onClick={handleGenerateDiff}
-                    disabled={!feedback || isGeneratingDiff}
-                    className={`relative -ml-px inline-flex items-center rounded-r-md px-3 py-1 text-sm font-semibold transition-colors ${viewMode === 'diff' ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'} disabled:text-gray-500 disabled:cursor-not-allowed`}
+                    disabled={!feedback || isGeneratingDiff || reviewType === 'repo'}
+                    className={`relative -ml-px inline-flex items-center rounded-r-md px-3 py-1 text-sm font-semibold transition-colors ${viewMode === 'diff' && reviewType === 'file' ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-700'} disabled:text-gray-500 disabled:cursor-not-allowed`}
+                    title={reviewType === 'repo' ? "Diff view is not available for repository reviews" : ""}
                 >
                     Diff
                 </button>
